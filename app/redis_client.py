@@ -7,20 +7,21 @@ import uuid
 import urllib.parse
 
 redis_host = os.getenv("REDIS_HOST", "")
-redis_port = os.getenv("REDIS_PORT", "6379")
+redis_port = int(os.getenv("REDIS_PORT", "6379"))
 redis_password = os.getenv("REDIS_PASSWORD", "")
 
 if redis_host:
-    encoded_password = urllib.parse.quote_plus(redis_password) if redis_password else ""
-    auth = f":{encoded_password}@" if encoded_password else ""
-    REDIS_URL = f"redis://{auth}{redis_host}:{redis_port}"
+    redis_client = redis.Redis(
+        host=redis_host, 
+        port=redis_port, 
+        password=redis_password if redis_password else None,
+        decode_responses=True
+    )
 else:
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_client = None
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 async def init_redis():
-    global redis_client
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
     await redis_client.ping()
 
 async def close_redis():
@@ -66,7 +67,7 @@ async def check_rate_limit(user_id: str, limit: int = 100, window_sec: int = 60)
     
     pipe = redis_client.pipeline()
     pipe.incr(key)
-    pipe.expire(key, window_sec, nx=True)
+    pipe.expire(key, window_sec)
     await pipe.execute()
     return True
 

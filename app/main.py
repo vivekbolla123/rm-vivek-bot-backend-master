@@ -3,6 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.routers import chat, data
 from app.redis_client import init_redis, close_redis
+from app.exceptions import BotException
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
+async def bot_exception_handler(request: Request, exc: BotException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": {"message": exc.message, "error_code": exc.error_code}},
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,6 +26,8 @@ app = FastAPI(
     lifespan=lifespan,
     root_path="/api/rm-bot-backend"
 )
+
+app.add_exception_handler(BotException, bot_exception_handler)
 
 # Enable CORS for the UI
 app.add_middleware(
