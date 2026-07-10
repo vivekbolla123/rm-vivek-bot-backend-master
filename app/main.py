@@ -10,7 +10,13 @@ async def lifespan(app: FastAPI):
     yield
     await close_redis()
 
-app = FastAPI(title="RM Bot Backend", description="Backend connecting UI to RM FastAPI Agent", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="RM Bot Backend", 
+    description="Backend connecting UI to RM FastAPI Agent", 
+    version="1.0.0", 
+    lifespan=lifespan,
+    root_path="/api/rm-bot-backend"
+)
 
 # Enable CORS for the UI
 app.add_middleware(
