@@ -1,0 +1,3 @@
+INFO:     Will watch for changes in these directories: ['/Users/vivekbolla/Desktop/RM/rm-bot-backend']
+ERROR:    [Errno 48] Address already in use
+Starting RM Bot Backend on port 8000...
