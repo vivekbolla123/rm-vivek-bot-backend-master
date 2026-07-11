@@ -2,9 +2,10 @@ import httpx
 import logging
 import json
 import asyncio
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import websockets
 from typing import Dict, Any, Optional
 
 from app.dependencies import get_current_user
@@ -18,6 +19,10 @@ from app.config import AGENT_URL
 
 router = APIRouter(prefix="/v1/bot", tags=["bot"])
 logger = logging.getLogger(__name__)
+
+# Global HTTP client for proxying to the agent
+# Using a shared client allows connection pooling (keep-alive) and significantly reduces latency.
+agent_http_client = httpx.AsyncClient(timeout=300.0)
 
 
 class UIChatRequest(BaseModel):
@@ -123,7 +128,6 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
         rm_token = await get_token(session_id)
 
     async def stream_generator():
-        client = httpx.AsyncClient()
         try:
             payload = {
                 "message": body.message,
@@ -131,7 +135,7 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
                 "user_id": user_id,
                 "rm_token": rm_token
             }
-            async with client.stream("POST", AGENT_URL + "/chat", json=payload, timeout=300.0) as agent_res:
+            async with agent_http_client.stream("POST", AGENT_URL + "/chat", json=payload) as agent_res:
                 agent_res.raise_for_status()
                 async for chunk in agent_res.aiter_text():
                     if chunk:
@@ -145,7 +149,94 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
         except Exception as e:
             logger.error(f"Stream error: {e}")
             yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
-        finally:
-            await client.aclose()
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+@router.websocket("/ws/chat/{session_id}")
+async def websocket_proxy_endpoint(websocket: WebSocket, session_id: str):
+    await websocket.accept()
+    
+    user_id = websocket.query_params.get("user_id")
+    if not user_id:
+        # Fallback for MOCK_MODE, we can import it or just assume mock if not provided, but ideally we reject.
+        # Since MOCK_MODE is used in dependencies, let's just allow a mock user if testing.
+        from app.config import MOCK_MODE
+        if MOCK_MODE:
+            user_id = "mock-user-123"
+        else:
+            await websocket.send_json({"event": "error", "data": {"detail": "Missing user_id query param."}})
+            await websocket.close()
+            return
+    
+    # 1. Enforce single active session lock
+    active = await get_active_session(user_id)
+    if active and active != session_id:
+        await websocket.send_json({"event": "error", "data": {"detail": "This session is no longer active."}})
+        await websocket.close()
+        return
+
+    session = await get_session(session_id)
+    if not session:
+        session = await create_session(user_id)
+        
+    # Convert HTTP AGENT_URL to WS
+    ws_agent_url = AGENT_URL.replace("http://", "ws://").replace("https://", "wss://") + "/ws/chat"
+    
+    try:
+        async with websockets.connect(ws_agent_url) as agent_ws:
+            # We need a task to read from client and forward to agent, and vice versa.
+            async def forward_to_agent():
+                try:
+                    while True:
+                        data = await websocket.receive_json()
+                        message = data.get("message")
+                        rm_token = data.get("rm_token")
+                        stage_id = data.get("stage_id")
+                        
+                        allowed = await check_rate_limit(user_id, limit=20, window_sec=60)
+                        if not allowed:
+                            await websocket.send_json({"event": "error", "data": {"detail": "Too many requests. Please try again later."}})
+                            continue
+                            
+                        if stage_id:
+                            await update_session_stage(session_id, stage_id)
+                            
+                        if rm_token:
+                            await store_token(session_id, rm_token)
+                        else:
+                            rm_token = await get_token(session_id)
+                            
+                        payload = {
+                            "message": message,
+                            "session_id": session_id,
+                            "user_id": user_id,
+                            "rm_token": rm_token
+                        }
+                        await agent_ws.send(json.dumps(payload))
+                except WebSocketDisconnect:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error forwarding to agent: {e}")
+
+            async def forward_to_client():
+                try:
+                    while True:
+                        response = await agent_ws.recv()
+                        await websocket.send_text(response)  # Since agent yields JSON string dicts
+                except websockets.ConnectionClosed:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error forwarding to client: {e}")
+
+            await asyncio.gather(
+                forward_to_agent(),
+                forward_to_client()
+            )
+            
+    except Exception as e:
+        logger.error(f"WebSocket proxy error: {e}")
+        try:
+            await websocket.send_json({"event": "error", "data": {"detail": str(e)}})
+            await websocket.close()
+        except:
+            pass
