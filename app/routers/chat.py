@@ -189,6 +189,13 @@ async def websocket_proxy_endpoint(websocket: WebSocket, session_id: str):
                 try:
                     while True:
                         data = await websocket.receive_json()
+                        
+                        # Re-verify session lock!
+                        active = await get_active_session(user_id)
+                        if active and active != session_id:
+                            await websocket.send_json({"event": "error", "data": {"detail": "This session is no longer active."}})
+                            break
+
                         message = data.get("message")
                         rm_token = data.get("rm_token")
                         stage_id = data.get("stage_id")
