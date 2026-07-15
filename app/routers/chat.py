@@ -1,11 +1,9 @@
-import httpx
 import logging
 import json
 import asyncio
 from fastapi import APIRouter, Request, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import websockets
 from typing import Dict, Any, Optional
 
 from app.dependencies import get_current_user
@@ -15,14 +13,10 @@ from app.redis_client import (
     set_active_session, get_active_session, clear_active_session, refresh_active_session
 )
 from app.exceptions import BotException
-from app.config import AGENT_URL
+from app.agentcore_client import invoke_agent
 
 router = APIRouter(prefix="/v1/bot", tags=["bot"])
 logger = logging.getLogger(__name__)
-
-# Global HTTP client for proxying to the agent
-# Using a shared client allows connection pooling (keep-alive) and significantly reduces latency.
-agent_http_client = httpx.AsyncClient(timeout=300.0)
 
 
 class UIChatRequest(BaseModel):
@@ -129,20 +123,15 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
 
     async def stream_generator():
         try:
-            payload = {
-                "message": body.message,
-                "session_id": session_id,
-                "user_id": user_id,
-                "rm_token": rm_token
-            }
-            async with agent_http_client.stream("POST", AGENT_URL + "/chat", json=payload) as agent_res:
-                agent_res.raise_for_status()
-                async for chunk in agent_res.aiter_text():
-                    if chunk:
-                        yield chunk
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Agent returned error: {e.response.text}")
-            yield f"event: error\ndata: {json.dumps({'detail': 'Agent returned an error.'})}\n\n"
+            # AgentCore invoke_agent_runtime is not itself a stream from our
+            # side (non-streaming entrypoint), so we get back one full markdown
+            # result and emit it as a single SSE chunk to keep the frontend's
+            # existing SSE consumption contract intact.
+            result = await invoke_agent(session_id, body.message, rm_token)
+            yield f"data: {json.dumps({'content': result})}\n\n"
+        except BotException as e:
+            logger.error(f"Agent error: {e.message}")
+            yield f"event: error\ndata: {json.dumps({'detail': e.message})}\n\n"
         except asyncio.CancelledError:
             logger.info("Client disconnected, cancelling request to agent.")
             raise
@@ -152,10 +141,24 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
+async def _send_event(websocket: WebSocket, event: str, data: dict) -> None:
+    """
+    Emit one frame in the shape the frontend expects:
+        {"event": "<name>", "data": {...}}
+
+    Sent as text (not send_json) so the wire format is unambiguous and
+    matches the raw JSON strings the old upstream FastAPI agent produced.
+    """
+    try:
+        await websocket.send_text(json.dumps({"event": event, "data": data}))
+    except Exception as e:
+        logger.error(f"Failed to send WS frame event={event}: {e}")
+
+
 @router.websocket("/ws/chat/{session_id}")
 async def websocket_proxy_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    
+
     user_id = websocket.query_params.get("user_id")
     if not user_id:
         # Fallback for MOCK_MODE, we can import it or just assume mock if not provided, but ideally we reject.
@@ -164,86 +167,85 @@ async def websocket_proxy_endpoint(websocket: WebSocket, session_id: str):
         if MOCK_MODE:
             user_id = "mock-user-123"
         else:
-            await websocket.send_json({"event": "error", "data": {"detail": "Missing user_id query param."}})
+            await _send_event(websocket, "error", {"detail": "Missing user_id query param."})
             await websocket.close()
             return
-    
+
     # 1. Enforce single active session lock
     active = await get_active_session(user_id)
     if active and active != session_id:
-        await websocket.send_json({"event": "error", "data": {"detail": "This session is no longer active."}})
+        await _send_event(websocket, "error", {"detail": "This session is no longer active."})
         await websocket.close()
         return
 
     session = await get_session(session_id)
     if not session:
         session = await create_session(user_id)
-        
-    # Convert HTTP AGENT_URL to WS
-    ws_agent_url = AGENT_URL.replace("http://", "ws://").replace("https://", "wss://") + "/ws/chat"
-    
+
+    # There is no upstream agent WebSocket anymore — AgentCore is invoked via
+    # boto3 (SigV4-signed request/response, not a socket). Each inbound
+    # message triggers one invoke_agent_runtime call; the full result is sent
+    # back as a sequence of frames matching the frontend contract:
+    #   running=true → text → running=false      (success)
+    #   running=false → error                    (failure)
+    # running=false is the frontend's "done" signal — it MUST be emitted on
+    # every terminal path, otherwise isLoading stays true and the Reset /
+    # Close buttons stay disabled forever.
+    logger.info(f"WS connected: session={session_id} user={user_id}")
     try:
-        async with websockets.connect(ws_agent_url) as agent_ws:
-            # We need a task to read from client and forward to agent, and vice versa.
-            async def forward_to_agent():
-                try:
-                    while True:
-                        data = await websocket.receive_json()
-                        
-                        # Re-verify session lock!
-                        active = await get_active_session(user_id)
-                        if active and active != session_id:
-                            await websocket.send_json({"event": "error", "data": {"detail": "This session is no longer active."}})
-                            break
+        while True:
+            data = await websocket.receive_json()
+            logger.info(f"WS recv: session={session_id} keys={list(data.keys())}")
 
-                        message = data.get("message")
-                        rm_token = data.get("rm_token")
-                        stage_id = data.get("stage_id")
-                        
-                        allowed = await check_rate_limit(user_id, limit=20, window_sec=60)
-                        if not allowed:
-                            await websocket.send_json({"event": "error", "data": {"detail": "Too many requests. Please try again later."}})
-                            continue
-                            
-                        if stage_id:
-                            await update_session_stage(session_id, stage_id)
-                            
-                        if rm_token:
-                            await store_token(session_id, rm_token)
-                        else:
-                            rm_token = await get_token(session_id)
-                            
-                        payload = {
-                            "message": message,
-                            "session_id": session_id,
-                            "user_id": user_id,
-                            "rm_token": rm_token
-                        }
-                        await agent_ws.send(json.dumps(payload))
-                except WebSocketDisconnect:
-                    pass
-                except Exception as e:
-                    logger.error(f"Error forwarding to agent: {e}")
+            # Re-verify session lock on every turn.
+            active = await get_active_session(user_id)
+            if active and active != session_id:
+                await _send_event(websocket, "error", {"detail": "This session is no longer active."})
+                await _send_event(websocket, "running", {"status": False})
+                break
 
-            async def forward_to_client():
-                try:
-                    while True:
-                        response = await agent_ws.recv()
-                        await websocket.send_text(response)  # Since agent yields JSON string dicts
-                except websockets.ConnectionClosed:
-                    pass
-                except Exception as e:
-                    logger.error(f"Error forwarding to client: {e}")
+            message = data.get("message")
+            rm_token = data.get("rm_token")
+            stage_id = data.get("stage_id")
 
-            await asyncio.gather(
-                forward_to_agent(),
-                forward_to_client()
-            )
-            
+            allowed = await check_rate_limit(user_id, limit=20, window_sec=60)
+            if not allowed:
+                await _send_event(websocket, "error", {"detail": "Too many requests. Please try again later."})
+                await _send_event(websocket, "running", {"status": False})
+                continue
+
+            if stage_id:
+                await update_session_stage(session_id, stage_id)
+
+            if rm_token:
+                await store_token(session_id, rm_token)
+            else:
+                rm_token = await get_token(session_id)
+
+            # Signal turn start (marks the bot bubble as "thinking").
+            await _send_event(websocket, "running", {"status": True})
+            try:
+                result = await invoke_agent(session_id, message, rm_token)
+                logger.info(
+                    f"WS agent result: session={session_id} len={len(result) if result else 0}"
+                )
+                # Non-streaming entrypoint: emit the full markdown as a single
+                # text chunk. Frontend appends it to the current bot bubble.
+                await _send_event(websocket, "text", {"text": result})
+            except BotException as e:
+                logger.error(f"WS agent error: session={session_id} detail={e.message}")
+                await _send_event(websocket, "error", {"detail": e.message})
+            finally:
+                # ALWAYS release the pending UI state, success or failure.
+                await _send_event(websocket, "running", {"status": False})
+
+    except WebSocketDisconnect:
+        logger.info(f"WS disconnected: session={session_id}")
     except Exception as e:
-        logger.error(f"WebSocket proxy error: {e}")
+        logger.error(f"WebSocket proxy error: {e}", exc_info=True)
         try:
-            await websocket.send_json({"event": "error", "data": {"detail": str(e)}})
+            await _send_event(websocket, "error", {"detail": str(e)})
+            await _send_event(websocket, "running", {"status": False})
             await websocket.close()
-        except:
+        except Exception:
             pass

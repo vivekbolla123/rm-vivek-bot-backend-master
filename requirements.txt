@@ -4,4 +4,4 @@ httpx
 pydantic
 python-dotenv
 redis
-websockets
+boto3==1.40.6

@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -6,6 +7,14 @@ from app.redis_client import init_redis, close_redis
 from app.exceptions import BotException
 from fastapi.responses import JSONResponse
 from fastapi import Request
+
+# Make app-level loggers visible under uvicorn (uvicorn only wires up its own
+# loggers by default, leaving the root logger at WARNING and hiding our
+# logger.info calls).
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 async def bot_exception_handler(request: Request, exc: BotException):
     return JSONResponse(
