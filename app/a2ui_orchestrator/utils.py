@@ -15,11 +15,20 @@ def extract_record_count(text: str) -> int:
     return None
 
 def extract_field_names(text: str) -> list:
-    fields = ["hardAnchor", "B2BBackstop", "B2CBackstop", "plfThreshold"]
-    found = []
-    for f in fields:
-        if f in text:
-            found.append(f)
+    # Try to extract from "Change: field → value" patterns in confirmation cards
+    change_matches = re.findall(r'Change:\s*(\w+)\s*[→\->]', text)
+    if change_matches:
+        return list(dict.fromkeys(change_matches))  # deduplicate, preserve order
+    
+    # Fallback: check against known RM fields
+    known_fields = [
+        "hardAnchor", "fareAnchor", "B2BBackstop", "B2CBackstop", "plfThreshold",
+        "CurveID", "obSeats", "obFare", "BookedLoad", "StrategyReference",
+        "AutoTimeRangeFlag", "CugFlag", "TimeWindowRange",
+        "CarrExlusionB2C", "CarrExlusionB2B", "flightExclusionB2C", "flightExclusionB2B",
+        "forecastedplf", "forecastAllocFlag", "afForecastAllocFlag", "CanAdjustedForecast"
+    ]
+    found = [f for f in known_fields if f in text]
     return found
 
 def generate_message_id() -> str:

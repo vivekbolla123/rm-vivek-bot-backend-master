@@ -1,4 +1,3 @@
-import httpx
 import logging
 import json
 import asyncio
@@ -14,14 +13,9 @@ from app.redis_client import (
     set_active_session, get_active_session, clear_active_session, refresh_active_session
 )
 from app.exceptions import BotException
-from app.config import AGENT_URL
 
 router = APIRouter(prefix="/v1/bot", tags=["bot"])
 logger = logging.getLogger(__name__)
-
-# Global HTTP client for proxying to the agent
-# Using a shared client allows connection pooling (keep-alive) and significantly reduces latency.
-agent_http_client = httpx.AsyncClient(timeout=300.0)
 
 
 class UIChatRequest(BaseModel):
@@ -134,11 +128,13 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
             # Since AgentCore Memory expects session UUIDs to be >= 33 chars, ensure padding
             padded_session = session_id if len(session_id) >= 33 else session_id.ljust(33, 'x')
             
-            assistant_text = await invoke_agent(
+            agent_response = await invoke_agent(
                 session_id=padded_session, 
                 message=body.message, 
-                rm_token=rm_token
+                rm_token=rm_token,
+                actor_id=user_id
             )
+            assistant_text = agent_response.get("result", "")
 
             # Fake streaming for the UI to show typing effect
             chunk_size = 10
@@ -151,7 +147,10 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
             from app.a2ui_orchestrator.parser import parse_agent_response
             from app.a2ui_orchestrator.builder import build_a2ui_messages
             
-            parsed = parse_agent_response(assistant_text, session_id)
+            stage_id = agent_response.get("stage_id") or session.get("stage_id")
+            total_records = agent_response.get("total_records")
+            fields_changed = agent_response.get("fields_changed")
+            parsed = parse_agent_response(assistant_text, stage_id, total_records, fields_changed)
             a2ui_msgs = build_a2ui_messages(parsed, session_id)
             for msg in a2ui_msgs:
                 flat_msg = {**msg, **msg.get("metadata", {})}

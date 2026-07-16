@@ -41,7 +41,7 @@ def build_a2ui_messages(parsed_response: ParsedResponse, session_id: str = "") -
             "action": "show_preview",
             "sessionId": session_id,
             "stageIds": [parsed_response.stage_id] if parsed_response.stage_id else [],
-            "statusFilter": "changed",
+            "statusFilter": "fetched",
             "fields": [],
             "message": parsed_response.text
         }
@@ -83,7 +83,7 @@ def build_a2ui_messages(parsed_response: ParsedResponse, session_id: str = "") -
     else:
         # Default TEXT handling
         ui_schema["theme"] = "default"
-        ui_schema["components"] = [{"type": "text", "content": parsed_response.text}]
+        ui_schema["components"] = [{"type": "markdown", "content": parsed_response.text}]
 
     if parsed_response.type not in [MessageType.STAGED, MessageType.DATA_VIEW]:
         base_msg["metadata"]["ui_schema"] = ui_schema

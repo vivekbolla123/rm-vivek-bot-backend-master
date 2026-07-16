@@ -6,12 +6,12 @@ from .utils import extract_stage_id
 
 load_dotenv()
 
-def parse_agent_response(raw_text: str, stage_id: str = None) -> ParsedResponse:
+def parse_agent_response(raw_text: str, stage_id: str = None, total_records: int = None, fields_changed: list = None) -> ParsedResponse:
     # Always use the fallback parser to avoid strands dependency
     extracted_stage_id = extract_stage_id(raw_text) or stage_id
-    return _fallback_parse(raw_text, extracted_stage_id)
+    return _fallback_parse(raw_text, extracted_stage_id, total_records, fields_changed)
 
-def _fallback_parse(raw_text: str, stage_id: str) -> ParsedResponse:
+def _fallback_parse(raw_text: str, stage_id: str, total_records: int = None, fields_changed: list = None) -> ParsedResponse:
     from .utils import extract_record_count, extract_field_names
     import re
     clean_text = re.sub(r'<thinking>.*?</thinking>\s*', '', raw_text, flags=re.DOTALL).strip()
@@ -20,20 +20,20 @@ def _fallback_parse(raw_text: str, stage_id: str) -> ParsedResponse:
     
     if "┌────" in clean_text or "here is what i understood:" in text_lower or "shall i proceed?" in text_lower:
         return ParsedResponse(type=MessageType.CONFIRMATION, text=clean_text, stage_id=stage_id)
-    elif "preview is ready" in text_lower or "✅" in clean_text or "review the full diff" in text_lower:
+    elif "preview is ready" in text_lower or "✅" in clean_text or "review the full diff" in text_lower or "staged your changes" in text_lower or "review the changes" in text_lower:
         return ParsedResponse(
             type=MessageType.STAGED, 
             text=clean_text, 
             stage_id=stage_id,
-            total_records=extract_record_count(clean_text),
-            fields_changed=extract_field_names(clean_text)
+            total_records=total_records if total_records is not None else extract_record_count(clean_text),
+            fields_changed=fields_changed if fields_changed is not None else extract_field_names(clean_text)
         )
     elif "data view is ready" in text_lower or "🔍" in clean_text:
         return ParsedResponse(
-            type=MessageType("DATA_VIEW"),
+            type=MessageType.DATA_VIEW,
             text=clean_text,
             stage_id=stage_id,
-            total_records=extract_record_count(clean_text)
+            total_records=total_records if total_records is not None else extract_record_count(clean_text)
         )
     elif "validation failed" in text_lower or "errors found" in text_lower:
         return ParsedResponse(type=MessageType.VALIDATION_ERROR, text=clean_text, stage_id=stage_id)

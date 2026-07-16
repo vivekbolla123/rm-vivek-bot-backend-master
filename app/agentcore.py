@@ -119,13 +119,13 @@ def _invoke_sync(session_id: str, message: str, rm_token: str) -> str:
             "The assistant returned an unexpected response. Please try again.",
             status_code=502,
         )
-    return result
+    return body
 
 
-async def invoke_agent(session_id: str, message: str, rm_token: str) -> str:
+async def invoke_agent(session_id: str, message: str, rm_token: str = "", actor_id: str = "") -> dict:
     """
     Invoke the rm_bulk_action AgentCore runtime and return the agent's
-    final markdown text unchanged (frontend keys off specific phrases in it).
+    body response dictionary.
 
     session_id is reused as runtimeSessionId, so it must stay stable for the
     lifetime of a conversation and must be >= 33 chars (session UUIDs are 36).
