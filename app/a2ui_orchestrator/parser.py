@@ -16,6 +16,33 @@ def _fallback_parse(raw_text: str, stage_id: str, total_records: int = None, fie
     import re
     clean_text = re.sub(r'<thinking>.*?</thinking>\s*', '', raw_text, flags=re.DOTALL).strip()
     clean_text = re.sub(r'---INSTRUCTION---.*', '', clean_text, flags=re.DOTALL).strip()
+    
+    # Try to extract JSON block first
+    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', clean_text, re.DOTALL)
+    json_str = None
+    if json_match:
+        json_str = json_match.group(1)
+    elif clean_text.startswith('{') and clean_text.endswith('}'):
+        json_str = clean_text
+
+    if json_str:
+        try:
+            data = json.loads(json_str)
+            try:
+                msg_type = MessageType(data.get("type", "TEXT"))
+            except ValueError:
+                msg_type = MessageType.TEXT
+            
+            return ParsedResponse(
+                type=msg_type,
+                text=data.get("text", clean_text),
+                stage_id=data.get("stage_id", stage_id),
+                total_records=data.get("total_records", total_records),
+                fields_changed=data.get("fields_changed", fields_changed or [])
+            )
+        except Exception:
+            pass # fallback to string matching
+
     text_lower = clean_text.lower()
     
     if "┌────" in clean_text or "here is what i understood:" in text_lower or "shall i proceed?" in text_lower:

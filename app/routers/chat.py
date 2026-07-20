@@ -151,7 +151,7 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
             metadata_list.append(flat_msg)
             
         return {
-            "text": assistant_text,
+            "text": parsed.text,
             "metadata": metadata_list
         }
 

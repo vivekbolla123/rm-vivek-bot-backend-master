@@ -69,8 +69,10 @@ async def check_rate_limit(user_id: str, limit: int = 100, window_sec: int = 60)
     
     pipe = redis_client.pipeline()
     pipe.incr(key)
-    pipe.expire(key, window_sec)
-    await pipe.execute()
+    pipe.ttl(key)
+    results = await pipe.execute()
+    if results[1] == -1:
+        await redis_client.expire(key, window_sec)
     return True
 
 
