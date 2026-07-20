@@ -73,6 +73,9 @@ variables:
   DD_TAGS: "git.commit.sha:${GIT_COMMIT_SHA},git.ref:${GIT_REF},Department:RM"
   
   MOCK_MODE: "false"
+  AGENTCORE_REGION: "ap-south-1"
+  AGENTCORE_QUALIFIER: "DEFAULT"
+  AGENTCORE_READ_TIMEOUT: "120"
 
 secrets:
   REDIS_PASSWORD: /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/RM_CACHE_PASSWORD
@@ -81,27 +84,27 @@ environments:
   dev:
     count: 1
     variables:
-      AGENT_URL: "http://rm-fastapi-agent.dev.rm.local:8001/v1/agent"
       RM_WEBSERVICE_URL: "http://rm-webservice.dev.rm.local:8081/api/rm-webservice"
       REDIS_HOST: "ip-172-24-72-8.ap-south-1.compute.internal"
       REDIS_PORT: "6379"
+      RM_BULK_ACTION_AGENT_ARN: "arn:aws:bedrock-agentcore:ap-south-1:891377165721:runtime/rm_bulk_action-lO7EcuHBzC"
 
   uat:
     count: 1
     http:
       alias: 'uat-rm.qp.akasaair.com'
     variables:
-      AGENT_URL: "http://rm-fastapi-agent.uat.rm.local:8001/v1/agent"
       RM_WEBSERVICE_URL: "http://rm-webservice.uat.rm.local:8081/api/rm-webservice"
       REDIS_HOST: "ip-172-24-72-8.ap-south-1.compute.internal"
       REDIS_PORT: "6379"
+      RM_BULK_ACTION_AGENT_ARN: "arn:aws:bedrock-agentcore:ap-south-1:891377165721:runtime/rm_bulk_action-lO7EcuHBzC"
 
   prod:
     count: 2
     http:
       alias: 'prod-rm.qp.akasaair.com'
     variables:
-      AGENT_URL: "http://rm-fastapi-agent.prod.rm.local:8001/v1/agent"
       RM_WEBSERVICE_URL: "http://rm-webservice.prod.rm.local:8081/api/rm-webservice"
       REDIS_HOST: "ip-10-16-6-51.ap-south-1.compute.internal"
       REDIS_PORT: "6379"
+      RM_BULK_ACTION_AGENT_ARN: "arn:aws:bedrock-agentcore:ap-south-1:891377165721:runtime/rm_bulk_action-lO7EcuHBzC"

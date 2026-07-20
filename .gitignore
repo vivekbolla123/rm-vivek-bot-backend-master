@@ -9,3 +9,4 @@ env/
 .DS_Store
 *.log
 .pytest_cache/
+application-local.yml

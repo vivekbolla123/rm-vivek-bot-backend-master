@@ -6,9 +6,11 @@ import uuid
 
 import urllib.parse
 
-redis_host = os.getenv("REDIS_HOST", "172.24.72.8")
-redis_port = int(os.getenv("REDIS_PORT", "6379"))
-redis_password = os.getenv("REDIS_PASSWORD", "bRT__04M})0")
+from app.config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
+
+redis_host = REDIS_HOST
+redis_port = REDIS_PORT
+redis_password = REDIS_PASSWORD
 
 if redis_host:
     redis_client = redis.Redis(
