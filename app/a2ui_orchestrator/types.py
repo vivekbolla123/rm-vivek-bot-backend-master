@@ -12,6 +12,7 @@ class MessageType(str, Enum):
     VALIDATION_ERROR = 'VALIDATION_ERROR'   # Validation failed, show error table
     PREVIEW = 'PREVIEW'                     # Diff table data
     SUCCESS = 'SUCCESS'                     # Submit completed
+    REVERTED = 'REVERTED'                   # Revert completed
     ERROR = 'ERROR'                         # System error
 
 @dataclass

@@ -35,6 +35,8 @@ def _fallback_parse(raw_text: str, stage_id: str, total_records: int = None, fie
             stage_id=stage_id,
             total_records=total_records if total_records is not None else extract_record_count(clean_text)
         )
+    elif "successfully reverted" in text_lower or "undo is complete" in text_lower or "reverted the changes" in text_lower or "have reverted" in text_lower or "reverted the last change" in text_lower:
+        return ParsedResponse(type=MessageType.REVERTED, text=clean_text, stage_id=stage_id)
     elif "validation failed" in text_lower or "errors found" in text_lower:
         return ParsedResponse(type=MessageType.VALIDATION_ERROR, text=clean_text, stage_id=stage_id)
 

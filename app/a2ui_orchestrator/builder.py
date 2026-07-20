@@ -65,6 +65,14 @@ def build_a2ui_messages(parsed_response: ParsedResponse, session_id: str = "") -
         ui_schema["theme"] = "error"
         ui_schema["components"] = [{"type": "pre", "content": parsed_response.text}]
         
+    elif parsed_response.type == MessageType.REVERTED:
+        base_msg["metadata"] = {
+            "action": "show_summary",
+            "sessionId": session_id,
+            "stageIds": [parsed_response.stage_id] if parsed_response.stage_id else [],
+            "message": parsed_response.text
+        }
+        
     elif parsed_response.type == MessageType.SUCCESS:
         ui_schema["theme"] = "success"
         ui_schema["components"] = [
@@ -83,9 +91,9 @@ def build_a2ui_messages(parsed_response: ParsedResponse, session_id: str = "") -
     else:
         # Default TEXT handling
         ui_schema["theme"] = "default"
-        ui_schema["components"] = [{"type": "markdown", "content": parsed_response.text}]
+        ui_schema["components"] = [{"type": "text", "content": parsed_response.text}]
 
-    if parsed_response.type not in [MessageType.STAGED, MessageType.DATA_VIEW]:
+    if parsed_response.type not in [MessageType.STAGED, MessageType.DATA_VIEW, MessageType.REVERTED]:
         base_msg["metadata"]["ui_schema"] = ui_schema
     messages.append(base_msg)
     
