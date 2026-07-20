@@ -136,12 +136,8 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
             )
             assistant_text = agent_response.get("result", "")
 
-            # Fake streaming for the UI to show typing effect
-            chunk_size = 10
-            for i in range(0, len(assistant_text), chunk_size):
-                chunk = assistant_text[i:i+chunk_size]
-                yield f"event: text\ndata: {json.dumps({'text': chunk})}\n\n"
-                await asyncio.sleep(0.01)
+            # Send the full text immediately without fake streaming delays
+            yield f"event: text\ndata: {json.dumps({'text': assistant_text})}\n\n"
 
             # Generate SDUI metadata
             from app.a2ui_orchestrator.parser import parse_agent_response
