@@ -20,6 +20,8 @@ from app.config import (
     AGENTCORE_REGION,
     AGENTCORE_QUALIFIER,
     AGENTCORE_READ_TIMEOUT,
+    AWS_ACCESS_KEY,
+    AWS_SECRET_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,11 +32,20 @@ _boto_config = Config(
     retries={"max_attempts": 1},  # no auto-retry: avoid double-staging on timeout
 )
 
-_client = boto3.client(
-    "bedrock-agentcore",
-    region_name=AGENTCORE_REGION,
-    config=_boto_config,
-)
+if AWS_ACCESS_KEY and AWS_SECRET_KEY:
+    _client = boto3.client(
+        "bedrock-agentcore",
+        region_name=AGENTCORE_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY,
+        aws_secret_access_key=AWS_SECRET_KEY,
+        config=_boto_config,
+    )
+else:
+    _client = boto3.client(
+        "bedrock-agentcore",
+        region_name=AGENTCORE_REGION,
+        config=_boto_config,
+    )
 
 
 def _extract_actor_id(rm_token: str) -> str:

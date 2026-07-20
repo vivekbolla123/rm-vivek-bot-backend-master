@@ -27,6 +27,9 @@ REDIS_HOST = get_config("REDIS_HOST", "")
 REDIS_PORT = int(get_config("REDIS_PORT", "6379"))
 REDIS_PASSWORD = get_config("REDIS_PASSWORD", "")
 
+AWS_ACCESS_KEY = get_config("AWS_ACCESS_KEY", "")
+AWS_SECRET_KEY = get_config("AWS_SECRET_KEY", "")
+
 if not RM_BULK_ACTION_AGENT_ARN and not MOCK_MODE:
     raise RuntimeError(
         "RM_BULK_ACTION_AGENT_ARN is not set. Set it via env var, manifest.yml, or application.yml before starting the app."
