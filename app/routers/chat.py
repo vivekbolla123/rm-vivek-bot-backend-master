@@ -2,9 +2,9 @@ import logging
 import json
 import asyncio
 from fastapi import APIRouter, Request, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
+from fastapi.responses import JSONResponse
 
 from app.dependencies import get_current_user
 from app.redis_client import (
@@ -120,49 +120,48 @@ async def chat_endpoint(session_id: str, body: UIChatRequest, request: Request, 
     else:
         rm_token = await get_token(session_id)
 
-    async def stream_generator():
-        try:
-            # We now invoke the agent using the boto3 Strand wrapper!
-            from app.agentcore import invoke_agent
+    try:
+        # We now invoke the agent using the boto3 Strand wrapper!
+        from app.agentcore import invoke_agent
+        
+        # Since AgentCore Memory expects session UUIDs to be >= 33 chars, ensure padding
+        padded_session = session_id if len(session_id) >= 33 else session_id.ljust(33, 'x')
+        
+        agent_response = await invoke_agent(
+            session_id=padded_session, 
+            message=body.message, 
+            rm_token=rm_token,
+            actor_id=user_id
+        )
+        assistant_text = agent_response.get("result", "")
+
+        # Generate SDUI metadata
+        from app.a2ui_orchestrator.parser import parse_agent_response
+        from app.a2ui_orchestrator.builder import build_a2ui_messages
+        
+        stage_id = agent_response.get("stage_id") or session.get("stage_id")
+        total_records = agent_response.get("total_records")
+        fields_changed = agent_response.get("fields_changed")
+        parsed = parse_agent_response(assistant_text, stage_id, total_records, fields_changed)
+        
+        a2ui_msgs = build_a2ui_messages(parsed, session_id)
+        metadata_list = []
+        for msg in a2ui_msgs:
+            flat_msg = {**msg, **msg.get("metadata", {})}
+            metadata_list.append(flat_msg)
             
-            # Since AgentCore Memory expects session UUIDs to be >= 33 chars, ensure padding
-            padded_session = session_id if len(session_id) >= 33 else session_id.ljust(33, 'x')
-            
-            agent_response = await invoke_agent(
-                session_id=padded_session, 
-                message=body.message, 
-                rm_token=rm_token,
-                actor_id=user_id
-            )
-            assistant_text = agent_response.get("result", "")
+        return {
+            "text": assistant_text,
+            "metadata": metadata_list
+        }
 
-            # Send the full text immediately without fake streaming delays
-            yield f"event: text\ndata: {json.dumps({'text': assistant_text})}\n\n"
-
-            # Generate SDUI metadata
-            from app.a2ui_orchestrator.parser import parse_agent_response
-            from app.a2ui_orchestrator.builder import build_a2ui_messages
-            
-            stage_id = agent_response.get("stage_id") or session.get("stage_id")
-            total_records = agent_response.get("total_records")
-            fields_changed = agent_response.get("fields_changed")
-            parsed = parse_agent_response(assistant_text, stage_id, total_records, fields_changed)
-            a2ui_msgs = build_a2ui_messages(parsed, session_id)
-            for msg in a2ui_msgs:
-                flat_msg = {**msg, **msg.get("metadata", {})}
-                yield f"event: metadata\ndata: {json.dumps({'messages': [flat_msg]})}\n\n"
-                
-            yield f"event: running\ndata: {json.dumps({'status': False})}\n\n"
-
-        except BotException as e:
-            logger.error(f"Agent returned error: {str(e)}")
-            yield f"event: error\ndata: {json.dumps({'detail': e.message})}\n\n"
-        except asyncio.CancelledError:
-            logger.info("Client disconnected, cancelling request to agent.")
-            raise
-        except Exception as e:
-            logger.error(f"Stream error: {e}")
-            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
-
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    except BotException as e:
+        logger.error(f"Agent returned error: {str(e)}")
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    except asyncio.CancelledError:
+        logger.info("Client disconnected, cancelling request to agent.")
+        raise
+    except Exception as e:
+        logger.error(f"Endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 

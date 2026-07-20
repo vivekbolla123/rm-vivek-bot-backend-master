@@ -28,7 +28,7 @@ def _fallback_parse(raw_text: str, stage_id: str, total_records: int = None, fie
             total_records=total_records if total_records is not None else extract_record_count(clean_text),
             fields_changed=fields_changed if fields_changed is not None else extract_field_names(clean_text)
         )
-    elif "data view is ready" in text_lower or "🔍" in clean_text:
+    elif "data view is ready" in text_lower or "data for you to view" in text_lower or "prepared the data" in text_lower or "🔍" in clean_text:
         return ParsedResponse(
             type=MessageType.DATA_VIEW,
             text=clean_text,

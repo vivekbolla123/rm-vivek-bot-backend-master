@@ -38,10 +38,10 @@ def build_a2ui_messages(parsed_response: ParsedResponse, session_id: str = "") -
         base_msg["metadata"] = {
             "total_records": parsed_response.total_records,
             "sample_changes": parsed_response.sample_changes,
-            "action": "show_preview",
+            "action": "data_fetched",
             "sessionId": session_id,
             "stageIds": [parsed_response.stage_id] if parsed_response.stage_id else [],
-            "statusFilter": "fetched",
+            "statusFilter": "all",
             "fields": [],
             "message": parsed_response.text
         }
